@@ -122,37 +122,42 @@ class CometSqlFileTestSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     }
   }
 
+  // Optional filter: -Dcomet.test.sql.filter=str_to_map runs only matching files
+  private val sqlFileFilter = sys.props.getOrElse("comet.test.sql.filter", "")
+
   // Discover and register all .sql test files
-  discoverTestFiles(testResourceDir).foreach { file =>
-    val relativePath = testResourceDir.toURI.relativize(file.toURI).getPath
-    val parsed = SqlFileTestParser.parse(file)
-    val combinations = configMatrix(parsed.configMatrix)
+  discoverTestFiles(testResourceDir)
+    .filter(f => sqlFileFilter.isEmpty || f.getName.contains(sqlFileFilter))
+    .foreach { file =>
+      val relativePath = testResourceDir.toURI.relativize(file.toURI).getPath
+      val parsed = SqlFileTestParser.parse(file)
+      val combinations = configMatrix(parsed.configMatrix)
 
-    // Skip tests that require a newer Spark version
-    val skip = parsed.minSparkVersion.exists(!meetsMinSparkVersion(_))
+      // Skip tests that require a newer Spark version
+      val skip = parsed.minSparkVersion.exists(!meetsMinSparkVersion(_))
 
-    if (combinations.size <= 1) {
-      // No matrix or single combination
-      test(s"sql-file: $relativePath") {
-        if (skip) {
-          logInfo(s"SKIPPED (requires Spark ${parsed.minSparkVersion.get}): $relativePath")
-        } else {
-          val effectiveConfigs = parsed.configs ++ combinations.headOption.getOrElse(Seq.empty)
-          runTestFile(relativePath, parsed.copy(configs = effectiveConfigs))
-        }
-      }
-    } else {
-      // Multiple combinations: generate one test per combination
-      combinations.foreach { matrixConfigs =>
-        val label = matrixConfigs.map { case (k, v) => s"$k=$v" }.mkString(", ")
-        test(s"sql-file: $relativePath [$label]") {
+      if (combinations.size <= 1) {
+        // No matrix or single combination
+        test(s"sql-file: $relativePath") {
           if (skip) {
             logInfo(s"SKIPPED (requires Spark ${parsed.minSparkVersion.get}): $relativePath")
           } else {
-            runTestFile(relativePath, parsed.copy(configs = parsed.configs ++ matrixConfigs))
+            val effectiveConfigs = parsed.configs ++ combinations.headOption.getOrElse(Seq.empty)
+            runTestFile(relativePath, parsed.copy(configs = effectiveConfigs))
+          }
+        }
+      } else {
+        // Multiple combinations: generate one test per combination
+        combinations.foreach { matrixConfigs =>
+          val label = matrixConfigs.map { case (k, v) => s"$k=$v" }.mkString(", ")
+          test(s"sql-file: $relativePath [$label]") {
+            if (skip) {
+              logInfo(s"SKIPPED (requires Spark ${parsed.minSparkVersion.get}): $relativePath")
+            } else {
+              runTestFile(relativePath, parsed.copy(configs = parsed.configs ++ matrixConfigs))
+            }
           }
         }
       }
     }
-  }
 }
